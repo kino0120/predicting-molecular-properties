@@ -1,0 +1,26 @@
+# コンペのデータとその加工品（Kaggle のルールで再配布禁止）
+archive/
+cache/
+history.csv
+
+# Uni-Mol の重み・学習結果（大きい。公式・Google Drive にある）
+weights/
+runs/
+drive
+*.pt
+*.npz
+*.npy
+
+# 他の人のノートブック・資料
+references/
+champspredictingmolecularproperties-*.pdf
+
+# 環境
+.venv/
+.venv-kaggle/
+slides/node_modules/
+.claude/
+GoogleDrive.dmg
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
