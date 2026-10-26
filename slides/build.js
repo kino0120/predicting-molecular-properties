@@ -30,6 +30,7 @@ function readCsv(file) {
 }
 const hist = readCsv(path.join(ROOT, "drive/runs/unimol_v2/history.csv"));
 const hist3 = readCsv(path.join(ROOT, "drive/runs/unimol_v3/history.csv"));
+const hist5 = readCsv(path.join(ROOT, "drive/runs/unimol_v5_atomaux/history.csv"));
 
 // ---------- プレゼンテーション ----------
 const pres = new pptxgen();
@@ -144,11 +145,11 @@ pres.addSection({ title: "導入" });
   });
   card(s, 7.4, 1.55, 5.33, 4.65, C.text2);
   text(s, "結果（Late Submission）", { x: 7.8, y: 1.85, w: 4.6, h: 0.4, fontSize: 16, color: HEX.accent5 });
-  text(s, "-2.424", { x: 7.8, y: 2.3, w: 4.6, h: 1.2, fontSize: 66, bold: true, color: HEX.accent6 });
+  text(s, "-2.497", { x: 7.8, y: 2.3, w: 4.6, h: 1.2, fontSize: 66, bold: true, color: HEX.accent6 });
   text(s, "Private LB", { x: 7.8, y: 3.5, w: 4.6, h: 0.35, fontSize: 16, color: HEX.lt1 });
-  text(s, bullets(["最終 LB なら 38 位前後（2,749 チーム中、銀メダル圏）", "Public -2.436", "Uni-Mol の fine-tune 2 本を 7:3 で平均（1 本 A100 で約 1 時間強）"], 14, HEX.lt1),
+  text(s, bullets(["最終 LB なら 33 位前後（2,749 チーム中、銀メダル圏）", "Public -2.507", "Uni-Mol の fine-tune 3 本を平均（1 本 A100 で約 1 時間強）"], 14, HEX.lt1),
     { x: 7.8, y: 4.1, w: 4.6, h: 1.9 });
-  s.addNotes("流れは5つです。結論を先に言うと、Uni-Mol を fine-tune したモデル2本の平均で Private -2.424、当時の最終順位なら38位前後でした。1本だけだと -2.372（42位前後）です。");
+  s.addNotes("流れは5つです。結論を先に言うと、Uni-Mol を fine-tune したモデル3本の平均で Private -2.497、当時の最終順位なら33位前後でした。1本だけだと -2.372（42位前後）です。");
 }
 
 // 3. 何を予測するコンペ？
@@ -596,57 +597,60 @@ pres.addSection({ title: "Uni-Mol" });
 // =====================================================================
 pres.addSection({ title: "結果" });
 
-// 19. 学習した 2 つのモデル
+// 19. 学習した 3 つのモデル
 {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "結果" });
-  s.addText("学習した 2 つのモデル", { placeholder: "title" });
+  s.addText("学習した 3 つのモデル", { placeholder: "title" });
   const H = (t, fill) => ({ text: t, options: { bold: true, color: HEX.lt1, fill: { color: fill } } });
-  const head = [H("", HEX.dk2), H("基本の設定", HEX.accent2), H("覚え込み対策あり", HEX.accent3)];
+  const head = [H("", HEX.dk2), H("基本の設定", HEX.accent2), H("覚え込み対策あり", HEX.accent3), H("原子の補助ターゲットあり", HEX.accent1)];
   const data = [
-    ["ねらい", "まずは素直に fine-tune", "覚え込み（学習と検証の差）を抑える"],
-    ["dropout", "なし", "0.1（事前学習のときと同じ）"],
-    ["何を当てるか（損失）", "J だけ", "J ＋ 4 成分（fc / sd / pso / dso）"],
-    ["学習（A100）", "60 エポック・約 1 時間 10 分", "60 エポック・約 1 時間 20 分"],
-    ["検証 score", "-2.385", "-2.159"],
+    ["ねらい", "まずは素直に fine-tune", "覚え込みを抑える", "電荷・遮蔽も学ばせる"],
+    ["dropout", "なし", "0.1", "なし"],
+    ["何を当てるか", "J だけ", "J ＋ 4 成分", "J ＋ 原子の電荷・遮蔽"],
+    ["学習時間（A100）", "約 1 時間 10 分", "約 1 時間 20 分", "約 1 時間 15 分"],
+    ["検証 score", "-2.385", "-2.159", "-2.379"],
   ];
   const rows = [head, ...data.map((r, i) => r.map((t, k) => ({ text: t, options: { fill: { color: i % 2 ? HEX.lt1 : HEX.lt2 }, bold: k === 0 || i === data.length - 1, color: k === 0 ? HEX.dk2 : HEX.dk1 } })))];
-  s.addTable(rows, { x: MX, y: 1.45, w: W - 2 * MX, colW: [2.6, 3.8, W - 2 * MX - 6.4], fontSize: 15, rowH: 0.52, valign: "middle",
+  s.addTable(rows, { x: MX, y: 1.45, w: W - 2 * MX, colW: [2.4, 3.1, 3.2, W - 2 * MX - 8.7], fontSize: 15, rowH: 0.52, valign: "middle",
     border: { type: "solid", color: HEX.lt1, pt: 1 }, margin: [0.05, 0.15, 0.05, 0.15], objectName: nm("table") });
-  const cw = (W - 2 * MX - 0.4) / 2;
-  [["dropout とは", "学習中に、ランダムに一部のつながりを切る。特定のデータを丸暗記しにくくなる"],
-   ["4 成分の補助損失とは", "J だけでなく、J の内訳 fc / sd / pso / dso も一緒に当てさせる。3 位チームで効いた方法"]].forEach(([h, d], i) => {
+  const cw = (W - 2 * MX - 0.8) / 3;
+  [["dropout", "学習中に一部のつながりをランダムに切り、丸暗記を防ぐ", "D", HEX.accent3],
+   ["4 成分の補助損失", "J の内訳 fc / sd / pso / dso も一緒に当てさせる（3 位の方法）", "+", HEX.accent3],
+   ["原子の補助ターゲット", "原子ごとに Mulliken 電荷と遮蔽も当てさせる（train だけの値）", "+", HEX.accent1]].forEach(([h, d, mark, color], i) => {
     const x = MX + i * (cw + 0.4);
-    card(s, x, 4.85, cw, 1.6);
-    atom(s, x + 0.3, 5.1, 0.55, i === 0 ? "D" : "+", HEX.accent3, { fontSize: 16 });
-    text(s, h, { x: x + 1.05, y: 5.1, w: cw - 1.3, h: 0.4, fontSize: 17, bold: true, color: C.text2 });
-    text(s, d, { x: x + 1.05, y: 5.55, w: cw - 1.3, h: 0.8, fontSize: 14 });
+    card(s, x, 4.85, cw, 1.75);
+    atom(s, x + 0.25, 5.05, 0.5, mark, color, { fontSize: 15 });
+    text(s, h, { x: x + 0.9, y: 5.07, w: cw - 1.1, h: 0.45, fontSize: 16, bold: true, color: C.text2 });
+    text(s, d, { x: x + 0.25, y: 5.65, w: cw - 0.5, h: 0.85, fontSize: 14 });
   });
-  s.addNotes("Uni-Mol の fine-tune を、設定を変えて2回学習しました。1つ目は基本の設定。学習と検証の差が開いて覚え込みが目立ったので、2つ目は dropout と、J の4成分も一緒に当てさせる補助損失を入れた「覚え込み対策あり」です。");
+  text(s, "どれも 60 エポック。原子の補助ターゲットは、EDA で効くと分かった値を学習のときだけ使う", { x: MX, y: 6.68, w: 12, h: 0.3, fontSize: 11, color: HEX.accent3 });
+  s.addNotes("Uni-Mol の fine-tune を、設定を変えて3回学習しました。1つ目は基本の設定。学習と検証の差が開いて覚え込みが目立ったので、2つ目は dropout と、J の4成分も一緒に当てさせる補助損失を入れた「覚え込み対策あり」。3つ目は基本の設定に、原子ごとの Mulliken 電荷と磁気遮蔽も当てさせる補助ターゲットを足したものです。EDA で、本物の電荷や遮蔽があると J の誤差が減ると分かっていたので、学習のときだけ使いました。");
 }
 
 // 20. 結果
 {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "結果" });
-  s.addText("結果：2 本の平均で -2.42", { placeholder: "title" });
+  s.addText("結果：3 本の平均で -2.50", { placeholder: "title" });
   const ep = hist.map((r) => String(r.epoch));
   s.addChart(pres.ChartType.line, [
     { name: "基本の設定", labels: ep, values: hist.map((r) => r.val) },
     { name: "覚え込み対策あり", labels: ep, values: hist3.map((r) => r.val) },
+    { name: "原子の補助ターゲットあり", labels: ep, values: hist5.map((r) => r.val) },
   ], {
-    x: MX, y: 1.45, w: 7.6, h: 5.0, chartColors: [HEX.accent2, HEX.accent3], lineSize: 2.5, lineDataSymbol: "none",
+    x: MX, y: 1.45, w: 7.6, h: 5.0, chartColors: [HEX.accent2, HEX.accent3, HEX.accent1], lineSize: 2.5, lineDataSymbol: "none",
     valAxisMinVal: -2.6, valAxisMaxVal: 0.0, valAxisMajorUnit: 0.5, valAxisLabelFormatCode: "0.0", valGridLine: { color: HEX.lt2, size: 0.75 }, catGridLine: { style: "none" },
     catAxisLabelFrequency: 10, showLegend: true, legendPos: "b", legendFontSize: 12, legendColor: HEX.dk1, ...chartText,
     showTitle: true, title: "検証 score の推移（エポックごと、低いほど良い）", objectName: nm("chart"),
   });
-  const stats = [["-2.372", "基本の設定（Private）"], ["-2.159", "覚え込み対策あり（検証）"], ["-2.424", "2 つを 7:3 で平均（Private）"]];
+  const stats = [["-2.372", "基本の設定だけ（Private）"], ["-2.424", "＋覚え込み対策を平均（Private）"], ["-2.497", "3 本を平均（Private）"]];
   stats.forEach(([v, l], i) => {
     const y = 1.45 + i * 1.12;
     card(s, 8.6, y, 4.13, 0.95, i === 2 ? C.text2 : C.background2);
     text(s, v, { x: 8.85, y, w: 1.65, h: 0.95, fontSize: 26, bold: true, valign: "middle", color: i === 2 ? HEX.accent6 : C.accent1 });
     text(s, l, { x: 10.5, y, w: 2.15, h: 0.95, fontSize: 13, valign: "middle", color: i === 2 ? HEX.lt1 : C.text1 });
   });
-  text(s, bullets(["検証と LB がほぼ一致（基本の設定：検証 -2.385 / Private -2.372）", "覚え込み対策ありは単体では全 type で悪化。でも混ぜると +0.05", "平均の重みは検証で決めた（7:3 が最良）"], 14), { x: 8.6, y: 4.95, w: 4.13, h: 1.5 });
-  s.addNotes("基本の設定は検証 -2.385、Private -2.372。覚え込み対策ありは、単体では全 type で悪化しました。それでも 7:3 で混ぜると Private -2.424 まで伸びて、当時の順位なら38位前後です。検証と LB はほぼ一致していました。");
+  text(s, bullets(["検証と LB がほぼ一致（3 本の平均：検証 -2.511 / Private -2.497）", "単体では基本の設定が最良。でも混ぜると伸びる", "重みは 0.5 / 0.1 / 0.4（検証で決定）"], 14), { x: 8.6, y: 4.95, w: 4.13, h: 1.85 });
+  s.addNotes("基本の設定は検証 -2.385、Private -2.372。覚え込み対策ありは単体では全 type で悪化、原子の補助ターゲットありは単体ではほぼ同じでした（1JHN は改善、3JHC は悪化）。それでも3本を 0.5 / 0.1 / 0.4 で混ぜると Private -2.497 まで伸びて、当時の順位なら33位前後です。検証と LB はほぼ一致していました。");
 }
 
 // 21. 振り返りと次の一手
@@ -655,17 +659,17 @@ pres.addSection({ title: "結果" });
   s.addText("振り返りと次の一手", { placeholder: "title" });
   const cw = (W - 2 * MX - 0.4) / 2;
   text(s, "分かったこと", { x: MX, y: 1.5, w: cw, h: 0.45, fontSize: 20, bold: true, color: HEX.accent6 });
-  text(s, bullets(["事前学習モデルの fine-tune で、LightGBM の上限（-2.0〜-2.1）を超えて銀メダル圏", "基本の設定は学習と検証の差が拡大（学習 -3.42 / 検証 -2.39）＝ 覚え込み", "覚え込み対策は 60 エポックでは逆効果。ただし混ぜると効く", "1JHC・1JHN・3JHC が弱い（値の幅が大きい type）"], 16, HEX.lt1), { x: MX, y: 2.1, w: cw, h: 3.5 });
+  text(s, bullets(["事前学習モデルの fine-tune 3 本の平均で銀メダル圏（Private -2.497）", "基本の設定は学習と検証の差が拡大（学習 -3.42 / 検証 -2.39）＝ 覚え込み", "覚え込み対策・原子の補助ターゲットは単体では伸びない。でも性格が違うので、混ぜると効く", "1JHC・3JHC が弱い。原子の補助ターゲットで 1JHN は改善"], 16, HEX.lt1), { x: MX, y: 2.1, w: cw, h: 3.5 });
   const x2 = MX + cw + 0.4;
   text(s, "次の一手", { x: x2, y: 1.5, w: cw, h: 0.45, fontSize: 20, bold: true, color: HEX.accent6 });
-  const next = [["覚え込み対策ありで、エポックを増やす", "dropout と補助損失は学習が遅くなる。どちらが効くかも切り分ける"], ["シード違いのモデルを増やして平均", "2 本の平均で +0.05。本数を増やす"], ["弱い type だけ追加で fine-tune", "2・3・4 位の方式"]];
+  const next = [["覚え込み対策ありで、エポックを増やす", "dropout と補助損失は学習が遅くなる。どちらが効くかも切り分ける"], ["性格の違うモデルを増やして平均", "3 本の平均で -2.37 → -2.50。本数を増やす"], ["弱い type だけ追加で fine-tune", "2・3・4 位の方式"]];
   next.forEach(([h, d], i) => {
     const y = 2.1 + i * 1.15;
     atom(s, x2, y, 0.55, String(i + 1), HEX.accent2, { fontSize: 16 });
     text(s, h, { x: x2 + 0.75, y: y - 0.02, w: cw - 0.8, h: 0.4, fontSize: 17, bold: true, color: HEX.lt1 });
     text(s, d, { x: x2 + 0.75, y: y + 0.4, w: cw - 0.8, h: 0.35, fontSize: 14, color: HEX.accent5 });
   });
-  s.addNotes("事前学習モデルの fine-tune で銀メダル圏まで来ました。課題は覚え込みと、1JHC などの弱い type。覚え込み対策ありは60エポックでは学習不足だったようなので、エポックを増やして試したい。あとはモデルを増やして平均、弱い type の fine-tune です。");
+  s.addNotes("事前学習モデルの fine-tune 3本の平均で銀メダル圏まで来ました。どの工夫も単体では基本の設定を超えませんでしたが、混ぜると伸びました。課題は覚え込みと、1JHC などの弱い type。次はエポックを増やす、モデルを増やして平均、弱い type の fine-tune です。");
 }
 
 // ---------- 書き出し ----------

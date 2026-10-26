@@ -23,4 +23,5 @@ slides/node_modules/
 GoogleDrive.dmg
 .DS_Store
 __pycache__/
+notebooks/logs/
 .ipynb_checkpoints/

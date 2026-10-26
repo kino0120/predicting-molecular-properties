@@ -5,9 +5,10 @@ Kaggle「[Predicting Molecular Properties](https://www.kaggle.com/competitions/c
 | モデル | 検証 | Public | Private |
 |---|---|---|---|
 | Uni-Mol fine-tune（基本の設定） | -2.385 | -2.382 | -2.372 |
-| 上記 ＋ 覚え込み対策ありのモデルを 7:3 で平均 | -2.438 | -2.436 | **-2.424** |
+| 上記 ＋ 覚え込み対策ありのモデルを 7:3 で平均 | -2.438 | -2.436 | -2.424 |
+| 上記 ＋ 原子の補助ターゲットありのモデル、3 本を 0.5 / 0.1 / 0.4 で平均 | -2.511 | -2.507 | **-2.497** |
 
-（Late Submission。当時の最終 LB なら 38 位前後）
+（Late Submission。当時の最終 LB なら 33 位前後）
 
 ## 中身
 - `notes/` … 調査と方針のメモ
@@ -19,6 +20,7 @@ Kaggle「[Predicting Molecular Properties](https://www.kaggle.com/competitions/c
   - `01_eda` … 上位解法で効いていた要素（距離・混成・角度・二面角など）の検証
   - `00_colab_check` … Colab（VS Code の Colab 拡張）の接続確認
   - `02_unimol_train` … Uni-Mol の fine-tune（前処理・学習・予測・提出ファイル作成）
+  - `03_unimol_atom_aux` … 上記の基本の設定に、原子の補助ターゲット（Mulliken 電荷・等方遮蔽）を足したもの
   - `.py` が編集用の元ファイル、`.ipynb` はそこから生成したもの
 - `slides/` … 勉強会用スライド（`champs_unimol.pptx`）と生成スクリプト `build.js`
 
