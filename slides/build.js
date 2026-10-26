@@ -385,33 +385,14 @@ pres.addSection({ title: "Uni-Mol" });
   s.addNotes("EDA で効くと分かった要素は、Uni-Mol の中ではすべて距離から表現できます。角度や二面角も、3〜4原子の距離の組で決まる。実際、ペア表現から原子間距離を 0.05Å の誤差で再現できたので、形の情報はちゃんと入っています。");
 }
 
-// 13. J の出し方
-{
-  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
-  s.addText("J の出し方", { placeholder: "title" });
-  const chips = ["原子 i の表現", "原子 j の表現", "i × j（要素ごとの積）", "ペアの表現 ij", "ペアの表現 ji", "type の埋め込み"];
-  chips.forEach((t, i) => box(s, MX, 1.5 + i * 0.62, 3.2, 0.5, t, { fontSize: 14, bold: true, color: C.text2 }));
-  arrow(s, MX + 3.3, 3.05, 0.6, 0, HEX.accent1);
-  box(s, 4.6, 2.55, 2.0, 1.0, "MLP\n（2 層）", { fontSize: 16, bold: true, fill: HEX.accent1, color: HEX.lt1 });
-  arrow(s, 6.7, 3.05, 0.6, 0, HEX.accent1);
-  box(s, 7.4, 2.35, 2.5, 1.4, "type 別に 4 成分\nfc / sd / pso / dso", { fontSize: 15, bold: true, fill: HEX.dk2, color: HEX.lt1 });
-  arrow(s, 10.0, 3.05, 0.6, 0, HEX.accent1);
-  atom(s, 10.75, 2.3, 1.5, "J", HEX.accent2, { fontSize: 40 });
-  text(s, "4 成分の合計", { x: 10.55, y: 3.9, w: 1.9, h: 0.35, fontSize: 13, align: "center", color: HEX.accent3 });
-  card(s, 4.6, 5.0, W - MX - 4.6, 1.7);
-  text(s, bullets(["(i, j) と (j, i) の平均 → 入れ替えに対して対称", "出力は type ごとの平均・標準偏差でスケールを合わせる", "損失は type 別 log(MAE) の平均（指標そのもの）", "AdamW、学習率は本体 1e-4 / 出力部分 1e-3、cosine、bf16"], 14),
-    { x: 4.85, y: 5.15, w: W - MX - 5.1, h: 1.5 });
-  s.addNotes("出力部分はシンプルです。原子 i と j の表現、ペアの表現、type の埋め込みを MLP に入れて、type ごとに4成分を出し、その合計を J にします。損失は評価指標そのもの。");
-}
-
-// 14. Uni-Mol の動かし方
+// 13. Uni-Mol の動かし方（全体像）
 {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
   s.addText("Uni-Mol の動かし方", { placeholder: "title" });
   const steps = [
     ["重みを取ってくる", "Hugging Face の dptech/Uni-Mol-Models から mol_pre_all_h_220816.pt（水素込み）と mol.dict.txt"],
-    ["入力を作る", "[CLS] 原子… [SEP] の並び、座標は重心を原点に。語彙はファイルの行順（[PAD]=0, [CLS]=1, [SEP]=2, C=4, H=8 …）"],
-    ["読み込めたか確かめる", "事前学習の距離予測部分で原子間距離を再現 → 誤差 0.05Å（最初は 0.98Å：使う表現と単位を取り違えていた）"],
+    ["入力を Uni-Mol の形にする", "語彙の番号、[CLS] 原子… [SEP] の並び、重心を原点にした座標、ペアの位置 +1（次のスライド）"],
+    ["読み込めたか確かめる", "事前学習の距離予測部分で原子間距離を再現 → 誤差 0.05Å（最初は 0.98Å：使う表現を取り違えていた）"],
     ["J を出す部分を付けて fine-tune", "手元の Mac で数百分子だけ動作確認 → VS Code の Colab 拡張で A100（1 エポック約 1.1 分）"],
   ];
   steps.forEach(([h, d], i) => {
@@ -435,14 +416,187 @@ pres.addSection({ title: "Uni-Mol" });
     { text: "# 使わない部分: lm_head,", options: { breakLine: true, color: HEX.accent5 } },
     { text: "#   dist_head, pair2coord_proj", options: { color: HEX.accent5 } },
   ], { x: 8.5, y: 2.15, w: 4.0, h: 3.6, fontSize: 13, fontFace: "Courier New", color: HEX.lt1 });
-  text(s, "約 4,700 万パラメータ、学習率は本体 1e-4", { x: 8.5, y: 6.05, w: 4.0, h: 0.4, fontSize: 13, color: HEX.accent5 });
-  s.addNotes("Uni-Mol の動かし方です。重みは Hugging Face から。入力の形と語彙の順番を公式に合わせました。読み込めたかは、事前学習の距離予測部分で原子間距離が 0.05Å の誤差で再現できるかで確認。そのあと J を出す部分を付けて Colab の A100 で fine-tune しました。");
+  text(s, "unimol_tools は PyTorch 2.4 以上が必要で Intel Mac に入らない → 本体のコードだけ移植（MIT）", { x: 8.5, y: 5.75, w: 4.0, h: 0.8, fontSize: 12, color: HEX.accent5 });
+  s.addNotes("Uni-Mol を動かすまでの全体像です。公式ライブラリは PyTorch 2.4 以上が必要で手元の Intel Mac に入らないので、本体のコードだけを移植して公開重みを読み込みました。ここから3枚で、2〜4 の中身を順に説明します。");
+}
+
+// 14. 入力を Uni-Mol の形にする
+{
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
+  s.addText("入力を Uni-Mol の形にする", { placeholder: "title" });
+  text(s, "例：メタノール（CH₃OH）1 分子", { x: MX, y: 1.35, w: 6, h: 0.35, fontSize: 14, bold: true, color: HEX.accent3 });
+  const toks = [["[CLS]", 1, "—", "原点"], ["C", 4, "0", "重心基準"], ["O", 6, "1", "重心基準"], ["H", 8, "2", "重心基準"], ["H", 8, "3", "重心基準"],
+    ["H", 8, "4", "重心基準"], ["H", 8, "5", "重心基準"], ["[SEP]", 2, "—", "原点"], ["[PAD]", 0, "—", "原点"]];
+  const LW = 1.55, tw = 1.1, tg = 0.07, tx0 = MX + LW;
+  const rowsY = { pos: 1.8, tok: 2.1, id: 2.78, idx: 3.1, xyz: 3.42 };
+  [["位置", rowsY.pos], ["トークン", rowsY.tok + 0.15], ["語彙の ID", rowsY.id], ["atom_index", rowsY.idx], ["座標", rowsY.xyz]].forEach(([l, y]) =>
+    text(s, l, { x: MX, y, w: LW - 0.1, h: 0.3, fontSize: 12, bold: true, color: HEX.dk2 }));
+  toks.forEach(([t, id, idx, xyz], i) => {
+    const x = tx0 + i * (tw + tg);
+    const special = t.startsWith("["), pad = t === "[PAD]";
+    text(s, String(i), { x, y: rowsY.pos, w: tw, h: 0.28, fontSize: 12, align: "center", color: HEX.accent3 });
+    box(s, x, rowsY.tok, tw, 0.6, t, { fontSize: 14, bold: true, fill: pad ? HEX.lt2 : special ? HEX.dk2 : HEX.accent1, color: pad ? HEX.accent3 : HEX.lt1 });
+    text(s, String(id), { x, y: rowsY.id, w: tw, h: 0.3, fontSize: 13, bold: true, align: "center", color: C.text1 });
+    text(s, idx, { x, y: rowsY.idx, w: tw, h: 0.3, fontSize: 13, align: "center", color: idx === "—" ? HEX.accent5 : HEX.accent2, bold: idx !== "—" });
+    text(s, xyz, { x, y: rowsY.xyz, w: tw, h: 0.3, fontSize: 11, align: "center", color: special ? HEX.accent5 : C.text1 });
+  });
+  const cards = [
+    ["語彙の番号を公式と同じにする", "mol.dict.txt の行の順番がそのまま ID。[PAD]=0, [CLS]=1, [SEP]=2, C=4, N=5, O=6, H=8, F=10、最後に [MASK]=30 を足して 31 語。ずれると別の原子として読まれる"],
+    ["座標は重心を原点に", "本物の原子の重心を (0,0,0) に移す。[CLS]・[SEP]・[PAD] は原点に置く。モデルは距離しか使わないので、分子の向きは関係ない"],
+    ["ペアの位置は +1 して取り出す", "train.csv の atom_index は 0 始まり。先頭に [CLS] がある分ずれるので、atom_index 0 の原子は位置 1 にいる"],
+    ["0 埋めを減らしてまとめる", "最大 29 原子 → 長さ 31。原子数が近い分子どうしで 1 バッチ（64 分子）にする。[PAD] は attention で無視される"],
+  ];
+  const cw = (W - 2 * MX - 0.3) / 2, ch = 1.32;
+  cards.forEach(([h, d], i) => {
+    const x = MX + (i % 2) * (cw + 0.3), y = 3.95 + Math.floor(i / 2) * (ch + 0.22);
+    card(s, x, y, cw, ch);
+    atom(s, x + 0.22, y + 0.2, 0.46, String(i + 1), i === 2 ? HEX.accent2 : HEX.accent1, { fontSize: 14 });
+    text(s, h, { x: x + 0.85, y: y + 0.2, w: cw - 1.05, h: 0.36, fontSize: 15, bold: true, color: C.text2 });
+    text(s, d, { x: x + 0.85, y: y + 0.58, w: cw - 1.05, h: 0.7, fontSize: 12 });
+  });
+  s.addNotes("Uni-Mol に入れるための形です。1つ目、語彙の番号は mol.dict.txt の行の順番で決まるので、公式と同じ番号にしないと別の原子として読まれます。2つ目、座標は重心を原点に移し、特別なトークンは原点に置きます。3つ目、先頭に [CLS] が入るので、train.csv の atom_index は +1 して取り出します。ここを間違えると隣の原子の J を予測してしまいます。4つ目、原子数の近い分子をまとめて、0埋めを減らしています。");
+}
+
+// 15. 移植が正しいかを確かめる
+{
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
+  s.addText("移植が正しいかを、学習前に確かめる", { placeholder: "title" });
+  const flow = [
+    ["分子の原子と座標 → 移植した本体（15 層）", C.background2, C.text2],
+    ["最終のペア表現（64 次元）", HEX.accent2, HEX.lt1],
+    ["dist_head（事前学習で距離を当てていた部品）", HEX.accent1, HEX.lt1],
+    ["× 3.3899 ＋ 6.3126（標準化を Å に戻す）", HEX.accent1, HEX.lt1],
+    ["座標から計算した本物の距離と比べる", HEX.dk2, HEX.lt1],
+  ];
+  const fw = 5.4, fh = 0.62, fg = 0.3;
+  flow.forEach(([t, fill, color], i) => {
+    const y = 1.5 + i * (fh + fg);
+    box(s, MX, y, fw, fh, t, { fontSize: 14, bold: true, fill, color });
+    if (i < flow.length - 1) s.addShape(pres.ShapeType.line, { x: MX + fw / 2, y: y + fh, w: 0, h: fg, line: { color: HEX.accent5, width: 2, endArrowType: "triangle" }, objectName: nm("arrow") });
+  });
+  text(s, [
+    { text: "読み込めなかった重み：なし", options: { breakLine: true } },
+    { text: "使わない部分：lm_head / dist_head / pair2coord_proj" },
+  ], { x: MX, y: 6.15, w: fw, h: 0.6, fontSize: 12, color: HEX.accent3 });
+  const rx = 6.4, rw = W - MX - rx, sw = (rw - 0.6) / 2;
+  card(s, rx, 1.5, sw, 1.9);
+  text(s, "0.98 Å", { x: rx + 0.25, y: 1.65, w: sw - 0.5, h: 0.8, fontSize: 36, bold: true, color: HEX.accent3 });
+  text(s, "最初：変化分のペア表現（delta）を入れた", { x: rx + 0.25, y: 2.5, w: sw - 0.5, h: 0.8, fontSize: 13, color: C.text1 });
+  arrow(s, rx + sw + 0.08, 2.45, 0.44, 0, HEX.accent2);
+  card(s, rx + sw + 0.6, 1.5, sw, 1.9, C.text2);
+  text(s, "0.05 Å", { x: rx + sw + 0.85, y: 1.65, w: sw - 0.5, h: 0.8, fontSize: 36, bold: true, color: HEX.accent6 });
+  text(s, "最終のペア表現を入れた（原子間距離の平均誤差）", { x: rx + sw + 0.85, y: 2.5, w: sw - 0.5, h: 0.8, fontSize: 13, color: HEX.lt1 });
+  card(s, rx, 3.65, rw, 1.35);
+  text(s, "なぜ delta ではダメだった？", { x: rx + 0.3, y: 3.8, w: rw - 0.6, h: 0.36, fontSize: 15, bold: true, color: C.text2 });
+  text(s, "delta は「最終のペア表現 − 入力の距離バイアス」。事前学習では座標をずらして戻す部品（pair2coord_proj）に使われていて、距離を当てる dist_head に入っていたのは最終のペア表現だった",
+    { x: rx + 0.3, y: 4.2, w: rw - 0.6, h: 0.75, fontSize: 12 });
+  card(s, rx, 5.25, rw, 1.45, "F6EDE5");
+  text(s, "なぜ学習前に確かめる？", { x: rx + 0.3, y: 5.4, w: rw - 0.6, h: 0.36, fontSize: 15, bold: true, color: C.text2 });
+  text(s, "語彙の番号や入力の形がずれていても、学習はエラーなく回ってしまう。精度が出ないときに原因を切り分けられないので、事前学習の部品で答え合わせしてから fine-tune する",
+    { x: rx + 0.3, y: 5.8, w: rw - 0.6, h: 0.85, fontSize: 12 });
+  s.addNotes("移植がうまくいったかは、学習の前に確かめました。事前学習で原子間距離を当てていた部品 dist_head はそのまま重みに入っているので、移植した本体のペア表現を入れて距離を予測させ、本物の距離と比べます。出力は標準化されているので、平均 6.3126、標準偏差 3.3899 で Å に戻します。最初は delta という別のペア表現を入れて 0.98Å ずれましたが、最終のペア表現に直すと 0.05Å。語彙や入力の形を間違えていても学習は回ってしまうので、ここで答え合わせするのが大事でした。");
+}
+
+// 16. 4 成分（fc / sd / pso / dso）とは
+{
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
+  s.addText("J の内訳：fc / sd / pso / dso", { placeholder: "title" });
+  text(s, "J ＝ fc ＋ sd ＋ pso ＋ dso。テストの合計点と科目別の点数の関係（train にだけ付いている）", { x: MX, y: 1.35, w: W - 2 * MX, h: 0.4, fontSize: 16, color: HEX.accent3 });
+  const comps = [
+    ["fc", "フェルミ接触項", "電子が核に直接触れて伝える太いルート。J のほとんどがこれ", HEX.accent2],
+    ["sd", "スピン双極子項", "電子の磁石どうしが、離れたまま引き合う・反発し合う分。たいてい小さい", HEX.accent1],
+    ["pso", "常磁性スピン軌道項", "電子が核のまわりを回る動き（電流）を通して伝わる分", HEX.accent1],
+    ["dso", "反磁性スピン軌道項", "pso と同じ軌道の効果で、逆向きに効く分。pso と打ち消し合いやすい", HEX.accent1],
+  ];
+  comps.forEach(([k, name, d, fill], i) => {
+    const y = 1.95 + i * 1.18;
+    card(s, MX, y, 6.6, 1.02);
+    atom(s, MX + 0.2, y + 0.16, 0.7, k, fill, { fontSize: k.length > 2 ? 15 : 18 });
+    text(s, name, { x: MX + 1.1, y: y + 0.12, w: 5.3, h: 0.35, fontSize: 15, bold: true, color: C.text2 });
+    text(s, d, { x: MX + 1.1, y: y + 0.48, w: 5.3, h: 0.5, fontSize: 12 });
+  });
+  const share = [["1JHC", 98], ["1JHN", 96], ["3JHC", 83], ["2JHN", 81], ["2JHC", 78], ["3JHN", 75], ["3JHH", 68], ["2JHH", 67]];
+  s.addChart(pres.ChartType.bar, [
+    { name: "fc", labels: share.map((r) => r[0]), values: share.map((r) => r[1]) },
+    { name: "sd + pso + dso", labels: share.map((r) => r[0]), values: share.map((r) => 100 - r[1]) },
+  ], {
+    x: 7.55, y: 1.9, w: W - MX - 7.55, h: 4.1, barDir: "bar", barGrouping: "stacked", chartColors: [HEX.accent2, HEX.accent5],
+    catAxisOrientation: "maxMin", valAxisMaxVal: 100, valAxisMajorUnit: 25, valAxisLabelFormatCode: "0\"%\"",
+    showValue: true, dataLabelPosition: "ctr", dataLabelFontSize: 11, dataLabelColor: HEX.lt1, dataLabelFormatCode: "0",
+    valGridLine: { color: HEX.lt2, size: 0.75 }, catGridLine: { style: "none" }, showLegend: true, legendPos: "b", legendFontSize: 12, legendColor: HEX.dk1, ...chartText,
+    showTitle: true, title: "絶対値で見た fc の割合 [%]", objectName: nm("chart"),
+  });
+  text(s, "1J はほぼ fc だけ。2JHH・3JHH は残り 3 つも 3 割ほど効く", { x: 7.55, y: 6.15, w: W - MX - 7.55, h: 0.55, fontSize: 13, bold: true, color: C.text2 });
+  s.addNotes("J は物理的な仕組みごとに4つに分けられて、足すとぴったり J になります。テストの合計点と科目別の点数の関係です。原子核は小さな磁石で、その磁石どうしが電子を伝言役にして感じ合う強さが J。伝言のルートが4種類あります。覚えるのは、fc がほぼ全部で残り3つは補正、ということ。ただ 2JHH や 3JHH では残りも3割ほど効いています。この内訳は train にしかないので、補助の正解として使えます。");
+}
+
+// 17. J の出し方
+{
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
+  s.addText("J の出し方", { placeholder: "title" });
+  const chips = ["原子 i の表現（512）", "原子 j の表現（512）", "i × j（要素ごとの積）", "ペアの表現 ij（64）", "ペアの表現 ji（64）", "type の埋め込み（64）"];
+  chips.forEach((t, i) => box(s, MX, 1.45 + i * 0.5, 3.3, 0.42, t, { fontSize: 13, bold: true, color: C.text2 }));
+  arrow(s, MX + 3.4, 2.9, 0.55, 0, HEX.accent1);
+  box(s, 4.65, 2.4, 2.0, 1.0, "MLP\n512 → 512", { fontSize: 15, bold: true, fill: HEX.accent1, color: HEX.lt1 });
+  arrow(s, 6.75, 2.9, 0.55, 0, HEX.accent1);
+  box(s, 7.4, 2.2, 2.55, 1.4, "type 別に 4 成分\nfc / sd / pso / dso", { fontSize: 15, bold: true, fill: HEX.dk2, color: HEX.lt1 });
+  text(s, "基本の設定：合計（J）だけに正解\n対策あり：4 成分にも正解", { x: 7.4, y: 3.7, w: 2.55, h: 0.6, fontSize: 11, color: HEX.accent3, align: "center" });
+  arrow(s, 10.05, 2.9, 0.55, 0, HEX.accent1);
+  atom(s, 10.75, 2.15, 1.5, "J", HEX.accent2, { fontSize: 40 });
+  text(s, "4 成分の合計", { x: 10.55, y: 3.75, w: 1.9, h: 0.35, fontSize: 13, align: "center", color: HEX.accent3 });
+  const cards = [
+    ["入れ替えに強くする", "(i, j) の順で入れた出力と (j, i) の順の出力を平均する。どちらの原子を先に書いても同じ J になる"],
+    ["スケールを合わせる", "出力 ＝ 平均[type, 成分] ＋ 標準偏差[type, 成分] × MLP の出力。8 type × 4 成分の統計は学習分子だけで計算"],
+    ["MLP の形", "入力 1,728 次元（512×3 ＋ 64×2 ＋ 64）→ LayerNorm → 512 → 512 → 32（8 type × 4 成分）。自分の type の 4 つだけ使う"],
+  ];
+  const cw = (W - 2 * MX - 0.6) / 3;
+  cards.forEach(([h, d], i) => {
+    const x = MX + i * (cw + 0.3);
+    card(s, x, 4.6, cw, 2.1);
+    atom(s, x + 0.22, 4.8, 0.46, String(i + 1), HEX.accent1, { fontSize: 14 });
+    text(s, h, { x: x + 0.85, y: 4.83, w: cw - 1.05, h: 0.4, fontSize: 15, bold: true, color: C.text2 });
+    text(s, d, { x: x + 0.25, y: 5.4, w: cw - 0.5, h: 1.2, fontSize: 13 });
+  });
+  s.addNotes("J を出す部分は新しく付けました。原子 i と j の表現、その積、ペアの表現を両方向、type の埋め込みを並べて MLP に入れ、type ごとに4成分を出して合計を J にします。工夫は3つ。i と j を入れ替えた出力を平均して、順番に依存しないようにする。type と成分ごとに値の大きさが全然違うので、学習分子で計算した平均と標準偏差でスケールを戻す。出力は 8 type × 4 成分の 32 個で、自分の type の4つだけ使う。");
+}
+
+// 18. 学習の設定
+{
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Uni-Mol" });
+  s.addText("学習の設定と、その理由", { placeholder: "title" });
+  const data = [
+    ["学習率", "本体 1e-4 ／ 出力部分 1e-3", "事前学習の知識は少しずつ直し、新しい出力部分は速く学ばせる"],
+    ["スケジュール", "最初の 3% で上げて、あとは cosine で 0 へ", "いきなり大きく動かして事前学習の重みを壊さない"],
+    ["最適化", "AdamW（weight decay 0.01）、勾配クリップ 1.0", "decay は重み行列だけ（bias・LayerNorm は除く）"],
+    ["損失", "type 別 log(MAE) の平均", "評価指標そのもの。値の幅が違う type を同じ重みで扱える"],
+    ["検証", "train 分子の 5% を分子単位で取り分け", "同じ分子が両側に入ると甘くなる → 検証 -2.385 ≒ Private -2.372"],
+    ["計算", "1 バッチ 64 分子、A100 で bf16、60 エポック", "1 エポック約 1.1 分（T4 なら fp16）"],
+    ["再開", "毎エポック last.pt、最良を best.pt に保存", "Colab が切れても同じセルを実行すれば続きから"],
+  ];
+  const rows = data.map(([k, v, r], i) => [
+    { text: k, options: { bold: true, color: HEX.accent1, fill: { color: i % 2 ? HEX.lt1 : HEX.lt2 } } },
+    { text: [{ text: v, options: { bold: true, color: HEX.dk1, fontSize: 14, breakLine: true } }, { text: r, options: { color: HEX.accent3, fontSize: 12 } }], options: { fill: { color: i % 2 ? HEX.lt1 : HEX.lt2 } } },
+  ]);
+  s.addTable(rows, { x: MX, y: 1.45, w: 8.1, colW: [1.6, 6.5], fontSize: 14, rowH: 0.74, valign: "middle",
+    border: { type: "solid", color: HEX.lt1, pt: 1 }, margin: [0.04, 0.15, 0.04, 0.15], objectName: nm("table") });
+  const prog = Array.from({ length: 101 }, (_, p) => p);
+  const mult = prog.map((p) => (p < 3 ? p / 3 : 0.5 * (1 + Math.cos(Math.PI * (p - 3) / 97))));
+  s.addChart(pres.ChartType.line, [{ name: "学習率の倍率", labels: prog.map((p) => (p % 25 === 0 ? `${p}%` : "")), values: mult }], {
+    x: 9.0, y: 1.45, w: W - MX - 9.0, h: 3.0, chartColors: [HEX.accent1], lineSize: 2.5, lineDataSymbol: "none",
+    valAxisMinVal: 0, valAxisMaxVal: 1, valAxisMajorUnit: 0.5, valAxisLabelFormatCode: "0.0", valGridLine: { color: HEX.lt2, size: 0.75 }, catGridLine: { style: "none" },
+    catAxisLabelFrequency: 1, catAxisMajorTickMark: "none", showLegend: false, ...chartText,
+    showTitle: true, title: "学習率の倍率（学習の進み）", objectName: nm("chart"),
+  });
+  card(s, 9.0, 4.7, W - MX - 9.0, 1.95, C.text2);
+  text(s, "1/10", { x: 9.3, y: 4.85, w: 3.2, h: 0.9, fontSize: 44, bold: true, color: HEX.accent6 });
+  text(s, "本体の学習率は出力部分の 1/10。ゼロから学ぶ部分と、すでに知っている部分で速さを変える", { x: 9.3, y: 5.75, w: 3.2, h: 0.85, fontSize: 12, color: HEX.lt1 });
+  s.addNotes("学習の設定です。大事なのは学習率を2つに分けたこと。本体はすでに分子の形を知っているので 1e-4 で少しずつ、新しく付けた出力部分はゼロから学ぶので 1e-3 と10倍にしました。最初の3%で学習率をゆっくり上げるのも、事前学習の重みを最初に壊さないためです。損失は評価指標そのもの。検証は分子単位で分けたので、検証と LB がほぼ一致しました。");
 }
 
 // =====================================================================
 pres.addSection({ title: "結果" });
 
-// 15. 学習した 2 つのモデル
+// 19. 学習した 2 つのモデル
 {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "結果" });
   s.addText("学習した 2 つのモデル", { placeholder: "title" });
@@ -470,7 +624,7 @@ pres.addSection({ title: "結果" });
   s.addNotes("Uni-Mol の fine-tune を、設定を変えて2回学習しました。1つ目は基本の設定。学習と検証の差が開いて覚え込みが目立ったので、2つ目は dropout と、J の4成分も一緒に当てさせる補助損失を入れた「覚え込み対策あり」です。");
 }
 
-// 16. 結果
+// 20. 結果
 {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "結果" });
   s.addText("結果：2 本の平均で -2.42", { placeholder: "title" });
@@ -495,7 +649,7 @@ pres.addSection({ title: "結果" });
   s.addNotes("基本の設定は検証 -2.385、Private -2.372。覚え込み対策ありは、単体では全 type で悪化しました。それでも 7:3 で混ぜると Private -2.424 まで伸びて、当時の順位なら38位前後です。検証と LB はほぼ一致していました。");
 }
 
-// 17. 振り返りと次の一手
+// 21. 振り返りと次の一手
 {
   const s = pres.addSlide({ masterName: "CLOSING_DARK", sectionTitle: "結果" });
   s.addText("振り返りと次の一手", { placeholder: "title" });
