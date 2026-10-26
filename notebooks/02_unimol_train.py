@@ -1,10 +1,13 @@
 # %% [markdown]
 # # 02 Uni-Mol の fine-tune で J を予測する
 #
-# - **Colab**（VS Code の Colab 拡張でつなぐ）: 全データで学習する。データ・重み・キャッシュ・結果は Google Drive の `MyDrive/champs/` に置く
-# - **手元の Mac**: `smoke` モード（ごく少数の分子・CPU）で、コードが最後まで動くかだけを確認する
+# Colab（VS Code の Colab 拡張でつなぐ）で実行する。データ・重み・キャッシュ・結果は Google Drive の `MyDrive/champs/` に置く。
 #
-# 流れ: 設定 → 準備（Colab のみ: Drive・データ・重み）→ 前処理（キャッシュ）→ モデル → 重みの読み込み確認 → 学習 → 予測・提出ファイル
+# 流れ: 設定 → 準備（Drive・unimol_tools・重み）→ 前処理（キャッシュ）→ モデル → 重みの読み込み確認 → 学習 → 予測・提出ファイル
+#
+# Uni-Mol の本体は `unimol_tools`（DP Technology 公式、MIT ライセンス）から import して使う。
+# ただし公式の学習・予測の仕組み（`MolTrain` など）は「1分子に1つの値」しか扱えず、J は原子ペアごとの値なので、
+# 本体の部品だけを借りて、J を出す部分と学習ループは自分で書く。
 #
 # 学習は1エポックごとに `last.pt` を保存するので、切断されても同じセルを実行し直せば続きから再開できる。
 
@@ -15,7 +18,6 @@
 import gc
 import math
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -25,10 +27,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-IN_COLAB = Path('/content').exists()
-
 CFG = {
-    'run_name': 'unimol_v3',   # v1 は別版のデータで学習していたので使わない。v2 は dropout 0・補助損失なし（LB Private -2.372）
+    'run_name': 'unimol_v4',   # v4 = v3 と同じ設定を unimol_tools 版で。v2: dropout 0・補助損失なし（Private -2.372）、v3: 下の設定（v2 と 7:3 で平均して -2.424）
     'init': 'pretrained',      # 'pretrained'（Uni-Mol の重み）か 'scratch'（ランダム初期化。比較用）
     'epochs': 60,
     'batch_mols': 64,          # 1バッチの分子数
@@ -42,18 +42,14 @@ CFG = {
     'seed': 42,
     'resume': True,            # last.pt があれば続きから
     'log_every': 200,          # 何ステップごとに進み具合を表示するか
-    'smoke': not IN_COLAB,     # 手元では少数の分子で動作確認だけ
+    'smoke': False,            # True にすると少数の分子・2エポックで最後まで通す（コードを変えたときの確認用。CPU でも動く）
     'smoke_mols': 240,
 }
 if CFG['smoke']:
     CFG.update(epochs=2, batch_mols=8, log_every=5, run_name=CFG['run_name'] + '_smoke')
 
-if IN_COLAB:
-    BASE = Path('/content/drive/MyDrive/champs')
-    DATA = Path('/content/data')
-else:
-    BASE = Path('..').resolve()
-    DATA = BASE / 'archive'
+BASE = Path(os.environ.get('CHAMPS_BASE', '/content/drive/MyDrive/champs'))
+DATA = BASE / 'archive'      # コンペのデータ（必ず archive/ の版。下の「前処理」を参照）
 WEIGHTS = BASE / 'weights' / 'unimol'
 CACHE = BASE / 'cache'
 OUT = BASE / 'runs' / CFG['run_name']
@@ -66,36 +62,33 @@ if DEVICE.type == 'cuda':
     torch.backends.cudnn.allow_tf32 = True
 else:
     AMP_DTYPE = None
-print('colab:', IN_COLAB, '| device:', DEVICE, torch.cuda.get_device_name(0) if DEVICE.type == 'cuda' else '',
+print('device:', DEVICE, torch.cuda.get_device_name(0) if DEVICE.type == 'cuda' else '',
       '| amp:', AMP_DTYPE, '| torch', torch.__version__)
 print('out:', OUT)
 
 # %% [markdown]
-# ## 2. 準備（Colab のみ）: Drive・データ・Uni-Mol の重み
-# - データは Kaggle API で `/content/data` にダウンロードする（前処理のキャッシュが Drive にあれば省略）
-# - Kaggle の API トークンを聞かれたら貼り付けて Enter（画面にもノートブックにも残らない）
-# - 重みは Hugging Face の公式リポジトリ（dptech/Uni-Mol-Models）から Drive に1回だけ保存する
+# ## 2. 準備: Drive・unimol_tools・Uni-Mol の重み
+# - `unimol_tools` は `--no-deps` で入れる。依存のとおりに入れると numpy が古い版に入れ替わり、ランタイムの再起動が必要になるため。
+#   Colab に入っていない依存（rdkit・addict・hydra-core・lmdb）だけを別に入れる
+# - 版は 0.1.6 に固定する（このあと本体の内部の出力を直接使うので、版が変わると動かなくなる可能性がある）
+# - 重みは `UNIMOL_WEIGHT_DIR` を Drive にしておくと、`unimol_tools` が初回だけ Hugging Face（dptech/Uni-Mol-Models）から Drive に保存し、次からはそれを使う
 
 # %%
-if IN_COLAB:
-    if not Path('/content/drive/MyDrive').exists():
-        from google.colab import drive
-        drive.mount('/content/drive')
-    for p in (DATA, WEIGHTS, CACHE, OUT):
-        p.mkdir(parents=True, exist_ok=True)
+if str(BASE).startswith('/content/drive') and not Path('/content/drive/MyDrive').exists():
+    from google.colab import drive
+    drive.mount('/content/drive')
+for p in (WEIGHTS, CACHE, OUT):
+    p.mkdir(parents=True, exist_ok=True)
+os.environ['UNIMOL_WEIGHT_DIR'] = str(WEIGHTS)
 
-    # データは必ず手元の archive/ から作ったキャッシュ（Mac で作って Drive に置いたもの）を使う。
-    # Kaggle API で今ダウンロードできるファイルは版が違う（分子が14個多く、test が352行少ない）ので使わない
-    assert (CACHE / 'data_v1.npz').exists(), 'Drive の champs/cache/data_v1.npz（archive/ から作ったもの）がない'
+# %%
+%pip install -q --no-deps unimol_tools==0.1.6
+%pip install -q rdkit addict hydra-core lmdb
 
-    for f in ['mol_pre_all_h_220816.pt', 'mol.dict.txt']:
-        if not (WEIGHTS / f).exists():
-            from huggingface_hub import hf_hub_download
-            hf_hub_download('dptech/Uni-Mol-Models', f, local_dir=str(WEIGHTS))
-    print(sorted(p.name for p in WEIGHTS.iterdir()))
-else:
-    for p in (CACHE, OUT):
-        p.mkdir(parents=True, exist_ok=True)
+# %%
+from unimol_tools.models import UniMolModel
+
+print(sorted(p.name for p in WEIGHTS.iterdir()))
 
 # %% [markdown]
 # ## 3. 前処理
@@ -107,19 +100,31 @@ TYPES = ['1JHC', '1JHN', '2JHC', '2JHH', '2JHN', '3JHC', '3JHH', '3JHN']
 N_TYPES = len(TYPES)
 MAXA = 29
 
-# 語彙はファイルの行順（[PAD]=0, [CLS]=1, [SEP]=2, [UNK]=3, C=4, ...）。最後に [MASK] が足されて 31 語
+# 語彙はファイルの行順（[PAD]=0, [CLS]=1, [SEP]=2, [UNK]=3, C=4, ...）。最後に [MASK] が足されて 31 語。
+# 重みはこの番号で事前学習されている（元の Uni-Core と unimol_tools 0.1.4 までの読み方）。
+# unimol_tools 0.1.5 以降の Dictionary は特殊トークンを先に [CLS]=0, [UNK]=1, [PAD]=2, [SEP]=3 で登録するので番号がずれる。
+# そのため um.dictionary は使わず、ここで自分で番号を振る（C や H など原子の番号はどちらでも同じ）
+from unimol_tools.weights.weighthub import weight_download
+
+if not (WEIGHTS / 'mol.dict.txt').exists():
+    weight_download('mol.dict.txt', str(WEIGHTS))
 VOCAB = [line.split()[0] for line in open(WEIGHTS / 'mol.dict.txt') if line.strip()] + ['[MASK]']
 TOK = {s: i for i, s in enumerate(VOCAB)}
 PAD, CLS, SEP = TOK['[PAD]'], TOK['[CLS]'], TOK['[SEP]']
 print('vocab', len(VOCAB), {s: TOK[s] for s in ['[PAD]', '[CLS]', '[SEP]', 'H', 'C', 'N', 'O', 'F']})
 
+# データは必ず archive/ の版を使う。Kaggle API で今ダウンロードできるファイルは版が違う
+# （分子が14個多く、test が352行少ない）ので、提出に必要な 2,505,542 行にならない
 cache_file = CACHE / 'data_v1.npz'
 if cache_file.exists():
     D = dict(np.load(cache_file))
-    # archive/ の版であることの確認（train 4,658,147 行・test 2,505,542 行）
-    n_test_pairs = int(D['mol_is_test'][D['p_mol']].sum())
-    assert len(D['p_mol']) - n_test_pairs == 4658147 and n_test_pairs == 2505542, 'archive/ の版のデータではない'
+    if not CFG['smoke']:
+        # archive/ の版であることの確認（train 4,658,147 行・test 2,505,542 行）
+        n_test_pairs = int(D['mol_is_test'][D['p_mol']].sum())
+        assert len(D['p_mol']) - n_test_pairs == 4658147 and n_test_pairs == 2505542, 'archive/ の版のデータではない'
 else:
+    need = ['structures.csv', 'train.csv', 'test.csv', 'scalar_coupling_contributions.csv']
+    assert all((DATA / f).exists() for f in need), f'キャッシュがないので {DATA} に archive/ の CSV（{", ".join(need)}）を置く'
     t0 = time.time()
     st = pd.read_csv(DATA / 'structures.csv',
                      dtype={'atom_index': np.int8, 'x': np.float32, 'y': np.float32, 'z': np.float32})
@@ -261,142 +266,42 @@ def build_batch(mols):
 
 # %% [markdown]
 # ## 4. モデル
-# Uni-Mol の本体は `unimol_tools`（MIT ライセンス、DP Technology）の実装を、重みの名前を変えずに移したもの。
-# 原子の表現 x（512次元）と、原子ペアの表現（64次元 = attention のヘッド数）を出す。
-# ペア表現は「最終のペア表現」を使う（事前学習で原子間距離の予測に使われていたもの）。
+# 本体は `unimol_tools` の `UniMolModel` から、J の予測に要る部品（原子の埋め込み・距離の展開・Transformer）だけを使う。
+# `UniMolModel` の forward は分子全体の表現（[CLS]）しか返さず、原子ペアの表現は捨ててしまうので、
+# 部品を自分でつないで、エンコーダーが返す「最終のペア表現」を受け取る（事前学習で原子間距離の予測に使われていた表現）。
 #
 # J の出力部分: ペア (i, j) について [x_i, x_j, x_i*x_j, ペア表現 ij, ペア表現 ji, type の埋め込み] を MLP に入れ、
 # type ごとに4成分（fc/sd/pso/dso）を出して合計を J とする。(i, j) と (j, i) の平均を取るので、入れ替えに対して対称。
 
 # %%
-def gaussian(x, mean, std):
-    a = (2 * 3.14159) ** 0.5
-    return torch.exp(-0.5 * (((x - mean) / std) ** 2)) / (a * std)
-
-
-class GaussianLayer(nn.Module):
-    """原子間距離を 128 個のガウス関数で展開する（原子の組み合わせごとに倍率とずれを学習）"""
-
-    def __init__(self, K=128, edge_types=1024):
-        super().__init__()
-        self.K = K
-        self.means = nn.Embedding(1, K)
-        self.stds = nn.Embedding(1, K)
-        self.mul = nn.Embedding(edge_types, 1)
-        self.bias = nn.Embedding(edge_types, 1)
-        nn.init.uniform_(self.means.weight, 0, 3)
-        nn.init.uniform_(self.stds.weight, 0, 3)
-        nn.init.constant_(self.bias.weight, 0)
-        nn.init.constant_(self.mul.weight, 1)
-
-    def forward(self, x, edge_type):
-        mul = self.mul(edge_type).type_as(x)
-        bias = self.bias(edge_type).type_as(x)
-        x = (mul * x.unsqueeze(-1) + bias).expand(-1, -1, -1, self.K)
-        mean = self.means.weight.float().view(-1)
-        std = self.stds.weight.float().view(-1).abs() + 1e-5
-        return gaussian(x.float(), mean, std).type_as(self.means.weight)
-
-
-class NonLinearHead(nn.Module):
-    def __init__(self, input_dim, out_dim, hidden=None):
-        super().__init__()
-        hidden = hidden or input_dim
-        self.linear1 = nn.Linear(input_dim, hidden)
-        self.linear2 = nn.Linear(hidden, out_dim)
-
-    def forward(self, x):
-        return self.linear2(F.gelu(self.linear1(x)))
-
-
-class SelfMultiheadAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.0):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        self.scaling = self.head_dim ** -0.5
-        self.dropout = dropout
-        self.in_proj = nn.Linear(embed_dim, embed_dim * 3)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-
-    def forward(self, x, attn_bias):
-        """attn_bias: (B*H, L, L)。戻り値の logits（softmax 前）が次の層のバイアス = ペア表現になる"""
-        B, L, E = x.shape
-        q, k, v = self.in_proj(x).chunk(3, dim=-1)
-
-        def heads(t):
-            return t.view(B, L, self.num_heads, self.head_dim).transpose(1, 2).reshape(B * self.num_heads, L, self.head_dim)
-
-        q, k, v = heads(q) * self.scaling, heads(k), heads(v)
-        logits = torch.bmm(q, k.transpose(1, 2)) + attn_bias
-        attn = F.dropout(F.softmax(logits, dim=-1), p=self.dropout, training=self.training)
-        o = torch.bmm(attn, v).view(B, self.num_heads, L, self.head_dim).transpose(1, 2).reshape(B, L, E)
-        return self.out_proj(o), logits
-
-
-class TransformerEncoderLayer(nn.Module):
-    def __init__(self, embed_dim, ffn_embed_dim, attention_heads, dropout=0.0):
-        super().__init__()
-        self.dropout = dropout
-        self.self_attn = SelfMultiheadAttention(embed_dim, attention_heads, dropout=dropout)
-        self.self_attn_layer_norm = nn.LayerNorm(embed_dim)
-        self.fc1 = nn.Linear(embed_dim, ffn_embed_dim)
-        self.fc2 = nn.Linear(ffn_embed_dim, embed_dim)
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
-
-    def forward(self, x, attn_bias):
-        h, logits = self.self_attn(self.self_attn_layer_norm(x), attn_bias)
-        x = x + F.dropout(h, p=self.dropout, training=self.training)
-        h = self.fc2(F.gelu(self.fc1(self.final_layer_norm(x))))
-        x = x + F.dropout(h, p=self.dropout, training=self.training)
-        return x, logits
-
-
-class TransformerEncoderWithPair(nn.Module):
-    def __init__(self, encoder_layers=15, embed_dim=512, ffn_embed_dim=2048, attention_heads=64, dropout=0.0):
-        super().__init__()
-        self.heads = attention_heads
-        self.dropout = dropout
-        self.emb_layer_norm = nn.LayerNorm(embed_dim)
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
-        self.final_head_layer_norm = nn.LayerNorm(attention_heads)
-        self.layers = nn.ModuleList([TransformerEncoderLayer(embed_dim, ffn_embed_dim, attention_heads, dropout)
-                                     for _ in range(encoder_layers)])
-
-    def forward(self, emb, padding_mask, attn_bias):
-        B, L, _ = emb.shape
-        x = F.dropout(self.emb_layer_norm(emb), p=self.dropout, training=self.training)
-        x = x * (~padding_mask).unsqueeze(-1).type_as(x)
-        key_pad = padding_mask.view(B, 1, 1, L)
-        bias0 = attn_bias.view(B, self.heads, L, L).masked_fill(key_pad, float('-inf')).view(B * self.heads, L, L)
-        bias = bias0
-        for layer in self.layers:
-            x, bias = layer(x, bias)
-        x = self.final_layer_norm(x)
-        # 最終のペア表現（0埋めした位置は 0）。事前学習で原子間距離の予測に使われていた表現
-        pair = bias.view(B, self.heads, L, L).masked_fill(key_pad, 0)
-        # 入力の距離バイアスからの変化分。事前学習で座標の更新に使われていた表現
-        delta = pair - bias0.view(B, self.heads, L, L).masked_fill(key_pad, 0)
-        delta = self.final_head_layer_norm(delta.permute(0, 2, 3, 1))
-        return x, pair.permute(0, 2, 3, 1), delta
-
-
 class UniMolBackbone(nn.Module):
-    def __init__(self, vocab_size=31, dropout=0.0):
+    """unimol_tools の UniMolModel の部品を使い、原子の表現（512次元）と最終のペア表現（64次元 = ヘッド数）を返す"""
+
+    def __init__(self, dropout):
         super().__init__()
-        self.vocab_size = vocab_size
-        self.embed_tokens = nn.Embedding(vocab_size, 512, padding_idx=PAD)
-        self.encoder = TransformerEncoderWithPair(dropout=dropout)
-        self.gbf_proj = NonLinearHead(128, 64)
-        self.gbf = GaussianLayer(128, vocab_size * vocab_size)
+        um = UniMolModel(output_dim=1, data_type='molecule', remove_hs=False)  # 水素込みの重み（mol_pre_all_h_220816.pt）を読み込む
+        self.embed_tokens, self.gbf, self.gbf_proj, self.encoder = um.embed_tokens, um.gbf, um.gbf_proj, um.encoder
+        self.heads = um.args.encoder_attention_heads
+        self.n_vocab = len(um.dictionary)
+        assert self.n_vocab == len(VOCAB)
+        # 0 埋めの位置は勾配を流さない。unimol_tools は [PAD]=2 のつもりなので、ファイルの行順の [PAD]=0 に直す
+        self.embed_tokens.padding_idx = PAD
+        # unimol_tools の dropout は 0.1 で固定なので、設定の値に揃える（activation_dropout は元から 0）
+        for m in self.encoder.modules():
+            for a in ('dropout', 'emb_dropout', 'attention_dropout'):
+                if isinstance(getattr(m, a, None), float):
+                    setattr(m, a, dropout)
 
     def forward(self, tok, xyz):
         B, L = tok.shape
+        pad = tok.eq(PAD)
         dist = torch.cdist(xyz.float(), xyz.float())
-        edge_type = tok.unsqueeze(-1) * self.vocab_size + tok.unsqueeze(-2)
-        bias = self.gbf_proj(self.gbf(dist, edge_type))                     # (B, L, L, H)
-        bias = bias.permute(0, 3, 1, 2).reshape(B * self.encoder.heads, L, L)
-        return self.encoder(self.embed_tokens(tok), tok.eq(PAD), bias)
+        edge_type = tok.unsqueeze(-1) * self.n_vocab + tok.unsqueeze(-2)
+        bias = self.gbf_proj(self.gbf(dist, edge_type))                      # (B, L, L, H)：距離をガウス関数で展開
+        bias = bias.permute(0, 3, 1, 2).reshape(B * self.heads, L, L)
+        # 戻り値: 原子の表現, 最終のペア表現, 変化分のペア表現（delta）, 正則化用の値 ×2
+        x, pair, _, _, _ = self.encoder(self.embed_tokens(tok), attn_mask=bias, padding_mask=pad)
+        return x, pair.masked_fill(pad[:, None, :, None], 0)                # 0 埋めの位置（-inf が入っている）は 0 に
 
 
 def init_bert_params(module):
@@ -423,7 +328,7 @@ class JModel(nn.Module):
         self.register_buffer('c_std', torch.as_tensor(c_std))
 
     def forward(self, tok, xyz, pb, i, j, t):
-        x, pair, _ = self.backbone(tok, xyz)
+        x, pair = self.backbone(tok, xyz)
         xi, xj = x[pb, i], x[pb, j]
         pij, pji = pair[pb, i, j], pair[pb, j, i]
         te = self.type_emb(t)
@@ -434,9 +339,12 @@ class JModel(nn.Module):
 
 # %% [markdown]
 # ## 5. Uni-Mol の重みの読み込みと確認
-# 事前学習で使われた「最終のペア表現から原子間距離を当てる部分」（dist_head）で距離を予測させ、本物の距離と比べる。
-# dist_head の出力は標準化した距離（平均 6.3126・標準偏差 3.3899 で換算）なので、元の単位に戻して比べる。
-# 移植と語彙の対応が正しければ、誤差は 0.05Å 程度になる（手元で確認済み）。
+# `UniMolModel` は重みを `strict=False` で読み込むので、名前がずれていてもエラーにならない。読み込めなかった重みがないかをここで確かめる。
+#
+# さらに、事前学習で使われた「最終のペア表現から原子間距離を当てる部分」（dist_head）で距離を予測させ、本物の距離と比べる。
+# dist_head は `UniMolModel` に含まれないので、重みファイルから自分で読み込む。
+# 出力は標準化した距離（平均 6.3126・標準偏差 3.3899 で換算）なので、元の単位に戻して比べる。
+# 語彙の番号と入力の形が正しければ、誤差は 0.05Å 程度になる（自前で移植した版で 0.0501Å を確認済み）。
 
 # %%
 class DistanceHead(nn.Module):
@@ -451,11 +359,13 @@ class DistanceHead(nn.Module):
         return (x + x.transpose(-1, -2)) * 0.5
 
 
+backbone = UniMolBackbone(dropout=CFG['dropout'])
 state = torch.load(WEIGHTS / 'mol_pre_all_h_220816.pt', map_location='cpu', weights_only=True)['model']
-backbone = UniMolBackbone(len(VOCAB), dropout=CFG['dropout'])
 missing, unexpected = backbone.load_state_dict(state, strict=False)
 print('読み込めなかった本体の重み:', missing)
-print('使わない事前学習用の部分:', sorted({k.split('.')[0] for k in unexpected}))
+# encoder.final_head_layer_norm は変化分のペア表現（delta）用。unimol_tools では使わない設定になっている
+print('使わない事前学習用の部分:', sorted({k.rsplit('.', 1)[0] if k.startswith('encoder.') else k.split('.')[0] for k in unexpected}))
+assert not missing
 
 dist_head = DistanceHead()
 dist_head.load_state_dict({k[len('dist_head.'):]: v for k, v in state.items() if k.startswith('dist_head.')})
@@ -463,7 +373,7 @@ backbone.to(DEVICE).eval()
 dist_head.to(DEVICE).eval()
 with torch.no_grad():
     b = build_batch(val_mols[:16])
-    _, pair, _ = backbone(b['tok'], b['xyz'])
+    _, pair = backbone(b['tok'], b['xyz'])
     pred = dist_head(pair.float()) * 3.3899264663911888 + 6.312581655060595
     true = torch.cdist(b['xyz'], b['xyz'])
     atom = (b['tok'] != PAD) & (b['tok'] != CLS) & (b['tok'] != SEP)
@@ -473,7 +383,6 @@ with torch.no_grad():
 del dist_head, pair, pred, true, b
 
 if CFG['init'] == 'scratch':
-    backbone = UniMolBackbone(len(VOCAB), dropout=CFG['dropout'])
     backbone.apply(init_bert_params)
     print('本体はランダム初期化（比較用）')
 del state

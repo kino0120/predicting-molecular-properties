@@ -30,4 +30,5 @@ Kaggle「[Predicting Molecular Properties](https://www.kaggle.com/competitions/c
 
 ## 実行環境
 - 学習: Google Colab（A100）を VS Code の Colab 拡張から使用。データ・重み・結果は Google Drive に置く
+- Uni-Mol の本体は [unimol_tools](https://github.com/deepmodeling/Uni-Mol/tree/main/unimol_tools) 0.1.6 から import（J を出す部分と学習ループは自前）。v1〜v3 は本体を自前で移植した版で学習した
 - 動作確認・EDA: ローカル（Python 3.10、PyTorch 2.2 CPU、numpy / pandas / matplotlib / rdkit）
